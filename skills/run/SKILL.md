@@ -36,7 +36,7 @@ Task(subagent_type="general-purpose", team_name="bishx-run-{project}", name="<ro
 5. **Three reviewers per task.** Bug Reviewer (correctness/logic) + Security Reviewer (vulnerabilities) + Compliance Reviewer (project rules). All spawned fresh per task, run in parallel. Lead merges results, then validates CRITICAL/MAJOR via sonnet subagents.
 6. **Track teammates in state.** Always keep `teammates` object in state.json up to date (exception: short-lived Phase 11.5 agents — see Phase 11.5 step 3): `{"dev": "dev-1", "qa": "qa", "bug_reviewer": "bug-rev-3", "security_reviewer": "sec-rev-3", "compliance_reviewer": "comp-rev-3"}`. Update on every spawn/shutdown. Use these names for SendMessage recipients and shutdown_request targets.
 7. **Wait for real SendMessage.** Spawn ≠ completion. No message = not done.
-8. **Epic-scoped execution.** One epic per session. When epic exhausted → Release phase (Phase 11.5) → SHUTDOWN. `<bishx-complete>` after release or when user says stop. Do NOT auto-select next epic.
+8. **Epic-scoped execution.** One epic per session. When ALL leaf tasks in epic are closed (epic exhausted) → Release phase (Phase 11.5) → SHUTDOWN. "No ready tasks" ≠ "epic exhausted" — check ALL tasks, not just ready ones. `<bishx-complete>` after release or when user says stop. Do NOT auto-select next epic.
 9. **Dev does not touch bd or git push.** Dev implements and notifies Lead. Lead commits, pushes, closes in bd.
 10. **Track progress with Claude Code tasks.** For each bd task, create internal tasks (TaskCreate) and update them (TaskUpdate) as you go. This gives the user visibility into what step you're on.
 11. **CRITICAL: Update `waiting_for` BEFORE every wait.** Before waiting for ANY teammate response, you MUST update `waiting_for` in state.json. The stop hook uses this field to allow you to idle. If you forget — the hook will block your stop and you'll loop forever printing "Жду". Use this exact command:
@@ -162,8 +162,8 @@ Before entering the main loop, select which epic to work on.
 
 ### Epic Exhaustion
 
-When the selected epic runs out of tasks (all closed or remaining are blocked):
-→ Go to Phase 11.5 (Release). Do NOT select another epic.
+When ALL leaf tasks in the epic are closed → Go to Phase 11.5 (Release). Do NOT select another epic.
+"Epic exhausted" means EVERY task is closed — not just "no ready tasks right now."
 
 ## Main Loop
 
@@ -171,8 +171,29 @@ When the selected epic runs out of tasks (all closed or remaining are blocked):
 LOOP:
   1. git status --porcelain → dirty? → handle (commit/stash). Do NOT continue with dirty worktree.
 
-  2. bd ready → filter to tasks belonging to state.epic_id (match by parent chain).
-     No matching tasks? → epic exhausted. Go to Phase 11.5 (Release).
+  2. CHECK EPIC STATUS (two-step — do NOT skip):
+     a. Collect ALL leaf tasks in epic:
+        `bd children {state.epic_id} --json` → features.
+        For each feature: `bd children {feature_id} --json` → tasks.
+        Flatten to a single list of leaf tasks (the ones with no children — actual work items).
+     b. Classify:
+        - all_closed = every leaf task has status "closed"
+        - open_tasks = leaf tasks with status != "closed" (includes open, in_progress, blocked)
+     c. Decision:
+        - all_closed == true → epic exhausted. Go to Phase 11.5 (Release).
+        - open_tasks exist → there is more work. Continue to step 2d.
+     d. Get ready tasks: `bd ready` → filter to tasks belonging to state.epic_id (match by parent chain).
+        - ready_tasks is NOT empty → continue to step 3 (pick next task).
+        - ready_tasks IS empty BUT open_tasks exist → tasks are blocked by dependencies.
+          Run `bd sync` to refresh state (a just-closed task should auto-unblock dependents).
+          Re-check `bd ready` filtered to epic. If still empty:
+          Log: "Epic has {N} unclosed tasks but none are ready. Checking blockers..."
+          Run `bd blocked --parent {state.epic_id} --json` to see what blocks them.
+          For each blocked task: check if ALL its blockers are closed. If yes → stale dependency.
+          Remove stale deps: `bd dep remove {blocked_task_id} {closed_blocker_id}` for each.
+          After cleanup, re-check `bd ready`. If STILL empty → tell user:
+          "Epic has unclosed tasks but all are blocked: {list of blocked task IDs and their blockers}."
+          Use AskUserQuestion: "Continue waiting or go to Release?" options: ["Wait and retry", "Go to Release"].
 
   3. task = next one from filtered list. bd update {id} --status in_progress
      CREATE CLAUDE CODE TASKS for this bd task:

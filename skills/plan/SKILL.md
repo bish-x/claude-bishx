@@ -27,7 +27,7 @@ Planner (opus) ──→ [Parallel:     ├─ Completeness (sonnet)     ] ─�
 
 **Actors:**
 - **Researcher** (opus): Deep codebase + external research with RQ protocol and confidence tagging
-- **Planner** (opus): Creates bite-sized, TDD-embedded plans with complexity budget
+- **Planner** (opus): Creates right-sized, TDD-embedded plans adapted to actual feature complexity
 - **Skeptic** (opus): Hunts mirages (presence + absence) — verifies claims against reality
 - **TDD Reviewer** (sonnet): Ensures genuine test-first compliance with quantitative metrics
 - **Completeness Validator** (sonnet): Requirements traceability — every requirement ↔ task
